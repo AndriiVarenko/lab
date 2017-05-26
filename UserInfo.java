@@ -7,10 +7,9 @@ import javax.xml.bind.annotation.XmlRootElement;
 @XmlRootElement
 @XmlAccessorType(XmlAccessType.FIELD)
 
-public class FileInfo {
-    
-    String sender;
-    String filename;
-    String content;    
-    
+public class UserInfo {
+
+    String login;
+    String password;
+
 }

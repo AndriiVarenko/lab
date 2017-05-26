@@ -1,223 +1,344 @@
-package seminar4;
+package seminar5;
 
 import java.io.*;
-import java.util.*;
-import lpi.server.soap.*;
 import java.nio.file.Files;
-import java.rmi.RemoteException;
+import java.util.*;
+import javax.ws.rs.client.Entity;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
 
 public class CommandProcessing {
 
-    private static final int ECHO_PARAMETERS_LENGTH = 2;
-    private static final int LOGIN_PARAMETERS_LENGTH = 3;
-    private static final int MESSAGE_PARAMETERS_LENGTH = 3;
-    private static final int FILE_PARAMETERS_LENGTH = 3;
+    private final int ECHO_VALID_PARAMETERS_LENGTH = 2;
+    private final int LOGIN_VALID_PARAMETERS_LENGTH = 3;
+    private final int MESSAGE_VALID_PARAMETERS_LENGTH = 3;
+    private final int FILE_VALID_PARAMETERS_LENGTH = 3;
 
-    private final IChatServer iServ;
+    private final javax.ws.rs.client.Client client;
 
-    public CommandProcessing(IChatServer iServ) {
-        this.iServ = iServ;
+    public CommandProcessing(javax.ws.rs.client.Client client) {
+        this.client = client;
     }
+
+    private final ParsResp pR = new ParsResp();
+
+    private final String uri = "http://localhost:8080/chat/server/";
+
+    private int receiveCod;
+    private boolean enteredComand;
+
+    private final Timer timer = new Timer();
+
+    private final UserInfo userInfo = new UserInfo();
+    private static Entity userInfoEntity;
+    private boolean logg = true;
+
+    private final FileInfo fileInfo = new FileInfo();
+    private Entity fileInfoEntity;
 
     public void ping() {
         try {
-            iServ.ping();
-            System.out.println("Ping succesfull");
+            System.out.println(client.target(uri + "ping")
+                    .request(MediaType.TEXT_PLAIN_TYPE)
+                    .get(String.class));
         } catch (Exception ex) {
             System.out.println("connections problem");
         }
     }
 
-    public void echo(String[] comandMas) throws RemoteException {
-        try {
-            if (isNormalLength(comandMas, ECHO_PARAMETERS_LENGTH)) {
-                System.out.println(iServ.echo(comandMas[1]));
+    public void echo(String[] comandMas) {
+
+        if (isValidNumberOfParameter(comandMas.length, ECHO_VALID_PARAMETERS_LENGTH)) {
+            try {
+                System.out.println(client.target(uri + "echo")
+                        .request(MediaType.TEXT_PLAIN_TYPE)
+                        .post(Entity.text(comandMas[1]), String.class));
+
+            } catch (Exception ex) {
+                System.out.println("connections problem");
             }
-        } catch (Exception ex) {
-            System.out.println("connections problem");
         }
     }
 
-    private final Timer timer = new Timer();
-    private static String myLogin = null;
-    private static String sessionId = null;
-
-    public void login(String[] comandMas) throws RemoteException, ArgumentFault, ServerFault, LoginFault {
-        if (!isNormalLength(comandMas, LOGIN_PARAMETERS_LENGTH)) {
-            return;
-        }
-        String login = comandMas[1];
-        String password = comandMas[2];
-
-        if (login.equals(myLogin)) {
+    public void login(String[] comandMas) {
+        if (!logg) {
             System.out.println("You are logged");
             return;
         }
 
-        if (sessionId != null) {
-            iServ.exit(sessionId);
-        }
-        sessionId = iServ.login(login, password);
-        if (myLogin == null) {
-            timer.schedule(receive, 0, 1500);
-        }
-        myLogin = comandMas[1];
-    }
+        if (!isValidNumberOfParameter(comandMas.length, LOGIN_VALID_PARAMETERS_LENGTH)) {
+            userInfo.login = comandMas[1];
+            userInfo.password = comandMas[2];
+            userInfoEntity = Entity.entity(userInfo, MediaType.APPLICATION_JSON_TYPE);
 
-    public void list() throws RemoteException, ArgumentFault, ServerFault {
+            receiveCod = client.target(uri + "user")
+                    .request(MediaType.TEXT_PLAIN_TYPE)
+                    .put(userInfoEntity)
+                    .getStatus();
 
-        if (isLogged(sessionId)) {
-            List<String> onlineUser = iServ.listUsers(sessionId);
-            if (onlineUser != null) {
-                for (String user : onlineUser) {
-                    System.out.println(user);
+            if (receiveCod == 201 || receiveCod == 202) {
+                if (receiveCod == 201) {
+                    System.out.println("New user registered");
                 }
+                if (receiveCod == 202) {
+                    System.out.println("the provided login/password are correct");
+                }
+                this.client.register(HttpAuthenticationFeature.basic(userInfo.login, userInfo.password));
+
+                if (logg) {
+                    logg = false;
+                    timer.schedule(receive, 0, 1500);
+                }
+            } else {
+                getRespCod(receiveCod);
             }
         }
     }
 
-    public void msg(String[] comandMas) throws RemoteException, ArgumentFault, ServerFault {
-        if (!isLogged(sessionId) || !isNormalLength(comandMas, MESSAGE_PARAMETERS_LENGTH) || !isItUser(comandMas[1])) {
-            return;
-        }
-        Message mess = new Message();
-        mess.setSender(myLogin);
-        mess.setReceiver(comandMas[1]);
-        mess.setMessage(comandMas[2]);
+    public void list() {
+        receiveCod = client.target(uri + "users")
+                .request(MediaType.APPLICATION_JSON_TYPE)
+                .get(Response.class)
+                .getStatus();
 
-        iServ.sendMessage(sessionId, mess);
-        System.out.println("Message sent");
+        if (receiveCod == 200) {
+            List<String> users = pR.pars(client.target(uri + "users")
+                    .request(MediaType.APPLICATION_JSON_TYPE)
+                    .get(String.class));
+
+            System.out.println("Active users:\n");
+
+            users.stream().forEach((us) -> {
+                System.out.println(us);
+            });
+
+            System.out.println();
+        } else {
+            getRespCod(receiveCod);
+        }
     }
 
-    public void file(String[] comandMas) throws IOException, ArgumentFault, ServerFault {
-        if (!isLogged(sessionId) || !isNormalLength(comandMas, FILE_PARAMETERS_LENGTH) || !isItUser(comandMas[1])) {
-            return;
+    public void msg(String[] comandMas) {
+
+        if (!isValidNumberOfParameter(comandMas.length, MESSAGE_VALID_PARAMETERS_LENGTH)) {
+            receiveCod = client.target(uri + comandMas[1] + "/messages")
+                    .request(MediaType.APPLICATION_JSON_TYPE)
+                    .post(Entity.text(comandMas[2]))
+                    .getStatus();
+
+            getRespCod(receiveCod);
         }
-        File file = new File(comandMas[2]);
-
-        if (!file.exists()) {
-            System.out.println("No this file");
-            return;
-        }
-
-        FileInfo fille = new FileInfo();
-
-        fille.setSender(myLogin);
-        fille.setReceiver(comandMas[1]);
-        fille.setFilename(comandMas[2]);
-        fille.setFileContent(Files.readAllBytes(file.toPath()));
-
-        iServ.sendFile(sessionId, fille);
-        System.out.println("File sent");
     }
 
-    public void receiveMsg() throws RemoteException, ArgumentFault, ServerFault {
-        if (isLogged(sessionId)) {
-            Message mess = iServ.receiveMessage(sessionId);
-            if (mess == null) {
-                if (flug) {
-                    System.out.println("No message");
-                }
+    public void file(String[] comandMas) throws IOException {
+        if (!isValidNumberOfParameter(comandMas.length, FILE_VALID_PARAMETERS_LENGTH)) {
+            File file = new File(comandMas[2]);
+            if (!file.exists()) {
+                System.out.println("No this file");
                 return;
             }
-            System.out.println("Message from: " + mess.getSender() + " : " + mess.getMessage());
+
+            java.util.Base64.Encoder encoder = java.util.Base64.getEncoder();
+            fileInfo.sender = userInfo.login;
+            fileInfo.filename = comandMas[2];
+            fileInfo.content = encoder.encodeToString(Files.readAllBytes(file.toPath()));
+            fileInfoEntity = Entity.entity(fileInfo, MediaType.APPLICATION_JSON_TYPE);
+
+            receiveCod = client.target(uri + comandMas[1] + "/files")
+                    .request(MediaType.APPLICATION_JSON_TYPE)
+                    .post(fileInfoEntity)
+                    .getStatus();
+
+            getRespCod(receiveCod);
         }
     }
 
-    public void receiveFile() throws RemoteException, ArgumentFault, ServerFault {
-        if (!isLogged(sessionId)) {
-            return;
-        }
-        FileInfo file = iServ.receiveFile(sessionId);
-        if (file == null) {
-            if (flug) {
-                System.out.println("No file");
-            }
-            return;
-        }
-        System.out.println("File from \"" + file.getSender() + "\" file name : \"" + file.getFilename() + "\"");
-
-        try (FileOutputStream fos = new FileOutputStream(
-                new File(file.getSender() + "_" + file.getFilename()))) {
-            fos.write(file.getFileContent());
-        } catch (Exception ex) {
-            System.out.println("Problem with write file");
-        }
+    private boolean isValidNumberOfParameter(int ComandMasLength, int validLength) {        
+        return (ComandMasLength != validLength) ? true : badParameterLength();
     }
-
-    public void exit() throws RemoteException, ArgumentFault, ServerFault {
-        Client.flug = false;
-        timer.cancel();
-        iServ.exit(sessionId);
-        System.out.println("Exit from server");
-    }
-
-    private boolean isNormalLength(String[] comandMas, int validLength) {
-        return comandMas.length == validLength ? true : badArgument();
-    }
-
-    private boolean badArgument() {
+    
+    private boolean badParameterLength(){
         System.out.println("Bad argument");
         return false;
     }
 
-    private boolean isLogged(String sessionId) {
-        return sessionId != null ? true : noLoged();
+    public void receiveMsg() {
+        receiveCod = client.target(uri + userInfo.login + "/messages")
+                .request(MediaType.APPLICATION_JSON_TYPE)
+                .get(Response.class)
+                .getStatus();
+
+        if (receiveCod == 200) {
+
+            List<String> messId = pR.pars(client.target(uri + userInfo.login + "/messages/")
+                    .request(MediaType.APPLICATION_JSON_TYPE)
+                    .get(String.class));
+
+            for (String id : messId) {
+                List<String> mess = pR.pars(client.target(uri + userInfo.login + "/messages/" + id)
+                        .request(MediaType.APPLICATION_JSON_TYPE)
+                        .get(String.class));
+
+                System.out.println("\nMessage from : " + mess.get(3) + "\nMessage text : " + mess.get(1) + "\n");
+                getRespCod(client.target(uri + userInfo.login + "/messages/" + id)
+                        .request(MediaType.APPLICATION_JSON_TYPE)
+                        .delete(Response.class)
+                        .getStatus());
+            }
+        } else {
+            getRespCod(receiveCod);
+        }
     }
 
-    private boolean noLoged() {
-        System.out.println("Please login first");
-        return false;
+    public void receiveFile() {
+        receiveCod = client.target(uri + userInfo.login + "/files")
+                .request(MediaType.APPLICATION_JSON_TYPE).get(Response.class)
+                .getStatus();
+
+        if (receiveCod == 200) {
+
+            List<String> fileId = pR.pars(client.target(uri + userInfo.login + "/files/")
+                    .request(MediaType.APPLICATION_JSON_TYPE)
+                    .get(String.class));
+
+            for (String id : fileId) {
+                FileInfo fI = client.target(uri + userInfo.login + "/files/" + id)
+                        .request(MediaType.APPLICATION_JSON_TYPE)
+                        .get(FileInfo.class);
+
+                java.util.Base64.Decoder decoder = java.util.Base64.getDecoder();
+                byte[] decodedContent = decoder.decode(fI.content);
+
+                if (decodedContent != null) {
+                    System.out.println("\nFile from " + fI.sender
+                            + "\nFile name : \"" + fI.filename + "\"\n");
+
+                    try (FileOutputStream fos = new FileOutputStream(
+                            new File(fI.sender + "_" + fI.filename))) {
+                        fos.write(decodedContent);
+                    } catch (Exception ex) {
+                        System.out.println("Problem with write file");
+                    }
+                } else if (enteredComand) {
+                    System.out.println("No file");
+                }
+// delete file from server
+                getRespCod(client.target(uri + userInfo.login + "/files/" + id)
+                        .request(MediaType.APPLICATION_JSON_TYPE)
+                        .delete(Response.class)
+                        .getStatus());
+            }
+        } else {
+            getRespCod(receiveCod);
+        }
     }
 
-    private boolean isItUser(String user) {
-        return this.userStorage.contains(user) ? true : noUser();
+    public void exit() {
+        Client.flug = false;
+        timer.cancel();
+        if (client != null) {
+            client.close();
+        }
+        System.out.println("Exit from server");
     }
 
-    private boolean noUser() {
-        System.out.println("No this user");
-        return false;
-    }
+    private void getRespCod(int cod) {
+        switch (cod) {
 
-    private boolean flug;
+            case 200:
+                System.out.println("deleted successfully");
+                break;
+
+            case 201:
+                System.out.println("sending is processed");
+                break;
+
+            case 204:
+                if (enteredComand) {
+                    System.out.println("There are nothing for this  user");
+                }
+                break;
+
+            case 400:
+                System.out.println("incorrect data request");
+                break;
+
+            case 401:
+                System.out.println("authentication is not correct");
+                break;
+
+            case 403:
+                System.out.println("you are not allowed to access this resource");
+                break;
+
+            case 404:
+                System.out.println("the specified message was not found");
+                break;
+
+            case 406:
+                System.out.println("target user has too much pending files");
+                break;
+
+            case 500:
+                System.out.println("internal server error");
+                break;
+        }
+    }
 
     TimerTask receive = new TimerTask() {
 
         @Override
         public void run() {
-            try {
-                flug = false;
-                receiveMsg();
-                receiveFile();
-                activeUser();
-                flug = true;
-            } catch (RemoteException | ArgumentFault | ServerFault ex) {
-                System.out.println("Problem Timer task");
-            }
+
+            enteredComand = false;
+            receiveMsg();
+            receiveFile();
+            activeUser();
+            enteredComand = true;
         }
     };
+    private final List<String> user = new LinkedList<>();
 
-    private final List<String> userStorage = new LinkedList<>();
+    private void activeUser() {
+        if (client.target(uri + "user")
+                .request(MediaType.TEXT_PLAIN_TYPE)
+                .put(userInfoEntity)
+                .getStatus() == 202) {
 
-    private void activeUser() throws RemoteException, ArgumentFault, ServerFault {
-        if (sessionId != null) {
-            List<String> onlineUser = iServ.listUsers(sessionId);
+            List<String> activeUser = new LinkedList<>();
+            List<String> logedOut = new LinkedList<>();
+            List<String> list = null;
 
-            if (onlineUser == null) {
-                return;
+            if (client.target(uri + "users")
+                    .request(MediaType.APPLICATION_JSON_TYPE)
+                    .get(Response.class)
+                    .getStatus() == 200) {
+
+                list = pR.pars(client.target(uri + "users")
+                        .request(MediaType.APPLICATION_JSON_TYPE)
+                        .get(String.class));
             }
-            for (String user : onlineUser) {
-                if (!userStorage.contains(user)) {
-                    userStorage.add(user);
-                    System.out.println(user + " logged in");
+
+            for (String f : list) {
+                activeUser.add(f);
+
+                if (!user.contains(f)) {
+                    user.add(f);
+                    System.out.println("\t" + f + " logged in");
                 }
             }
-            for (String user : userStorage) {
-                if (!onlineUser.contains(user)) {
-                    System.out.println(user + " logged out");
-                    userStorage.remove(user);
+
+            for (String us : user) {
+                if (!activeUser.contains(us)) {
+                    System.out.println("\t" + us + " logged out");
+                    logedOut.add(us);
                 }
             }
+
+            logedOut.stream().forEach((out) -> {
+                user.remove(out);
+            });
         }
     }
 }

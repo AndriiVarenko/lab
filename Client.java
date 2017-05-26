@@ -1,7 +1,6 @@
-package seminar4;
+package seminar5;
 
 import java.util.Scanner;
-import lpi.server.soap.*;
 
 public class Client {
 
@@ -11,19 +10,13 @@ public class Client {
 
         try (Scanner scanner = new Scanner(System.in)) {
 
-            ChatServer serverWrapper = new ChatServer();
-            IChatServer serverProxy = serverWrapper.getChatServerProxy();
+            javax.ws.rs.client.Client client = javax.ws.rs.client.ClientBuilder.newClient();            
 
-            System.out.println("Welcome to server");
+            Interpretator inter = new Interpretator(client);
+            System.out.println("Welcome to server");            
 
-            Interpretator inter = new Interpretator(serverProxy);
-
-            while (flug) {
-                String inLine = scanner.nextLine().trim();
-
-                if (!inLine.equals("")) {
-                    inter.interpretator(inLine);
-                }
+            while (flug) {                
+                inter.interpretator(scanner.nextLine().trim());                
             }
 
         } catch(Exception ex){
